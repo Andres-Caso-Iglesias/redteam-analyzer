@@ -22,6 +22,7 @@ from redteam_analyzer.cli.output import (
     print_summary,
 )
 from redteam_analyzer.utils.external_tools import parse_nmap_progress
+from redteam_analyzer.cli.terminal import open_new_terminal, build_rta_command
 
 app = typer.Typer(
     name="redteam-analyzer",
@@ -74,8 +75,39 @@ def scan(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Verbose output"
     ),
+    new_terminal: bool = typer.Option(
+        False, "--new-terminal", "-T", help="Open scan in a new terminal window"
+    ),
 ) -> None:
     """Run a security scan against a target."""
+    # If --new-terminal, relaunch in new terminal and exit
+    if new_terminal:
+        cmd_args = ["scan", target]
+        if modules:
+            for m in modules:
+                cmd_args.extend(["-m", m])
+        if output:
+            cmd_args.extend(["-o", output])
+        if output_format:
+            for f in output_format:
+                cmd_args.extend(["-f", f])
+        if config:
+            cmd_args.extend(["-c", config])
+        if dry_run:
+            cmd_args.append("-d")
+        if auth_token:
+            cmd_args.extend(["-t", auth_token])
+        if passive_only:
+            cmd_args.append("-p")
+        if verbose:
+            cmd_args.append("-v")
+
+        full_cmd = build_rta_command(cmd_args)
+        if open_new_terminal(full_cmd):
+            console.print("[green]Scan opened in new terminal[/green]")
+        else:
+            console.print("[yellow]Could not open new terminal, running here[/yellow]")
+        return
     # Build target
     target_obj = _parse_target(target)
     
@@ -154,8 +186,28 @@ def recon(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Verbose output"
     ),
+    new_terminal: bool = typer.Option(
+        False, "--new-terminal", "-T", help="Open recon in a new terminal window"
+    ),
 ) -> None:
     """Run reconnaissance against a target."""
+    # If --new-terminal, relaunch in new terminal and exit
+    if new_terminal:
+        cmd_args = ["recon", target]
+        if passive_only:
+            cmd_args.append("-p")
+        if output:
+            cmd_args.extend(["-o", output])
+        if verbose:
+            cmd_args.append("-v")
+
+        full_cmd = build_rta_command(cmd_args)
+        if open_new_terminal(full_cmd):
+            console.print("[green]Recon opened in new terminal[/green]")
+        else:
+            console.print("[yellow]Could not open new terminal, running here[/yellow]")
+        return
+
     target_obj = _parse_target(target)
     
     config = ScanConfig(
