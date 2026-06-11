@@ -195,7 +195,7 @@ def scan(
                     raw = raw[:67] + "..."
                 progress.update(task, description=raw)
 
-        scan_config._on_progress = _on_progress
+        scan_config.on_progress = _on_progress
         result = asyncio.run(engine.scan(target_obj))
         progress.update(task, completed=True, description="Scan complete")
 

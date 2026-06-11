@@ -6,7 +6,7 @@ All models use Pydantic v2 for validation and serialization.
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Severity(str, Enum):
@@ -144,6 +144,8 @@ class ScopeConfig(BaseModel):
 class ScanConfig(BaseModel):
     """Full scan configuration."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     dry_run: bool = False
     auth_token: Optional[str] = None
     modules: List[str] = Field(default_factory=lambda: ["recon", "scan", "vuln", "report"])
@@ -157,6 +159,7 @@ class ScanConfig(BaseModel):
     report_template: str = "default"  # "default" or "executive"
     scan_results: Optional["ScanResult"] = None  # Results to export (for report plugin)
     scope: ScopeConfig = Field(default_factory=ScopeConfig)
+    on_progress: Optional[Any] = Field(default=None, exclude=True)
 
 
 class ToolInfo(BaseModel):

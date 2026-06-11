@@ -59,7 +59,7 @@ class ScanPlugin(BasePlugin):
         backend = getattr(config, "scan_backend", "nmap")
 
         # Get progress callback from config if available
-        on_progress = getattr(config, "_on_progress", None)
+        on_progress = getattr(config, "on_progress", None)
 
         try:
             if backend == "masscan" and check_tool_installed("masscan"):
