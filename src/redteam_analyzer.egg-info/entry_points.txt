@@ -1,0 +1,2 @@
+[console_scripts]
+redteam-analyzer = redteam_analyzer.cli.main:app

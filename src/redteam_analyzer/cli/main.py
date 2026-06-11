@@ -1,0 +1,320 @@
+"""CLI entry point for redteam-analyzer.
+
+Typer app with scan, recon, report, config, and plugin commands.
+"""
+
+import asyncio
+from pathlib import Path
+from typing import List, Optional
+
+import typer
+import yaml
+from rich.console import Console
+
+from redteam_analyzer.core.engine import Engine
+from redteam_analyzer.core.models import ScanConfig, ScopeConfig, Target
+from redteam_analyzer.core.plugin_manager import PluginManager
+from redteam_analyzer.cli.output import (
+    console,
+    create_findings_table,
+    create_progress_bar,
+    print_finding,
+    print_summary,
+)
+
+app = typer.Typer(
+    name="redteam-analyzer",
+    help="Red team security analysis tool — reconnaissance, scanning, vulnerability detection, and reporting.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+
+# Subcommands
+plugin_app = typer.Typer(help="Manage and list scan plugins.")
+config_app = typer.Typer(help="Configuration management.")
+app.add_typer(plugin_app, name="plugin")
+app.add_typer(config_app, name="config")
+
+
+def _load_config(config_path: Optional[str] = None) -> ScanConfig:
+    """Load ScanConfig from YAML file or return defaults."""
+    if config_path and Path(config_path).exists():
+        with open(config_path, "r") as f:
+            data = yaml.safe_load(f)
+        scope = ScopeConfig(**data.pop("scope", {}))
+        return ScanConfig(**data, scope=scope, config_path=config_path)
+    return ScanConfig()
+
+
+@app.command()
+def scan(
+    target: str = typer.Argument(..., help="Target IP, hostname, URL, or CIDR"),
+    modules: Optional[List[str]] = typer.Option(
+        None, "--module", "-m", help="Modules to run (default: all)"
+    ),
+    output: Optional[str] = typer.Option(
+        None, "--output", "-o", help="Output file path"
+    ),
+    output_format: Optional[List[str]] = typer.Option(
+        None, "--format", "-f", help="Output format: json, html, markdown"
+    ),
+    config: Optional[str] = typer.Option(
+        None, "--config", "-c", help="Config file path"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-d", help="Show what would run without executing"
+    ),
+    auth_token: Optional[str] = typer.Option(
+        None, "--auth-token", "-t", help="Auth token for intrusive modules"
+    ),
+    passive_only: bool = typer.Option(
+        False, "--passive-only", "-p", help="Passive reconnaissance only"
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Verbose output"
+    ),
+) -> None:
+    """Run a security scan against a target."""
+    # Build target
+    target_obj = _parse_target(target)
+    
+    # Load config
+    scan_config = _load_config(config)
+    scan_config.dry_run = dry_run
+    scan_config.auth_token = auth_token
+    scan_config.passive_only = passive_only
+    if modules:
+        scan_config.modules = modules
+    if output:
+        scan_config.output_path = output
+    if output_format:
+        scan_config.output_format = output_format
+    
+    # Execute scan
+    console.print(f"[bold blue]Starting scan against:[/bold blue] {target_obj.primary}")
+    
+    if dry_run:
+        console.print("[yellow]DRY RUN MODE — no network calls will be made[/yellow]")
+    
+    engine = Engine(scan_config)
+    
+    with create_progress_bar() as progress:
+        task = progress.add_task("Scanning...", total=None)
+        result = asyncio.run(engine.scan(target_obj))
+        progress.update(task, completed=True)
+    
+    # Output results
+    print_summary(result)
+    
+    if result.findings:
+        table = create_findings_table(result.findings)
+        console.print(table)
+        
+        if verbose:
+            console.print("\n[bold]Detailed Findings:[/bold]")
+            for finding in result.findings:
+                print_finding(finding)
+    
+    # Save report if output specified
+    if output:
+        console.print(f"\n[green]Report saved to: {output}[/green]")
+
+
+@app.command()
+def recon(
+    target: str = typer.Argument(..., help="Target hostname or domain"),
+    passive_only: bool = typer.Option(
+        False, "--passive-only", "-p", help="Passive recon only (no direct requests)"
+    ),
+    output: Optional[str] = typer.Option(
+        None, "--output", "-o", help="Output file path"
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Verbose output"
+    ),
+) -> None:
+    """Run reconnaissance against a target."""
+    target_obj = _parse_target(target)
+    
+    config = ScanConfig(
+        modules=["recon"],
+        passive_only=passive_only,
+        output_path=output,
+    )
+    
+    console.print(f"[bold blue]Starting recon against:[/bold blue] {target_obj.primary}")
+    
+    engine = Engine(config)
+    
+    with create_progress_bar() as progress:
+        task = progress.add_task("Reconning...", total=None)
+        result = asyncio.run(engine.scan(target_obj))
+        progress.update(task, completed=True)
+    
+    print_summary(result)
+    
+    if result.findings:
+        table = create_findings_table(result.findings)
+        console.print(table)
+        
+        if verbose:
+            for finding in result.findings:
+                print_finding(finding)
+
+
+@app.command()
+def report(
+    file: str = typer.Argument(..., help="Scan results file (JSON) to generate report from"),
+    format: List[str] = typer.Option(
+        ["json"], "--format", "-f", help="Output format: json, html, markdown"
+    ),
+    template: str = typer.Option(
+        "default", "--template", "-t", help="HTML template: default or executive"
+    ),
+    output: Optional[str] = typer.Option(
+        None, "--output", "-o", help="Output file path"
+    ),
+) -> None:
+    """Generate a report from existing scan results."""
+    import json
+    
+    result_path = Path(file)
+    if not result_path.exists():
+        console.print(f"[red]File not found: {file}[/red]")
+        raise typer.Exit(code=1)
+    
+    # Load scan results from JSON
+    with open(result_path, "r") as f:
+        data = json.load(f)
+    
+    # Reconstruct ScanResult
+    from redteam_analyzer.core.models import Finding, ScanMetadata, Severity, FindingType, Evidence
+    
+    target_data = data.get("target", {})
+    target_obj = Target(**target_data)
+    
+    findings = []
+    for f_data in data.get("findings", []):
+        evidence_data = f_data.pop("evidence", {})
+        evidence = Evidence(**evidence_data) if evidence_data else Evidence()
+        f_data["type"] = FindingType(f_data["type"])
+        f_data["severity"] = Severity(f_data["severity"])
+        f_data["evidence"] = evidence
+        findings.append(Finding(**f_data))
+    
+    metadata = []
+    for m_data in data.get("metadata", []):
+        metadata.append(ScanMetadata(**m_data))
+    
+    scan_result = ScanResult(
+        target=target_obj,
+        findings=findings,
+        metadata=metadata,
+        errors=data.get("errors", []),
+    )
+    
+    config = ScanConfig(
+        modules=["report"],
+        output_format=format,
+        output_path=output,
+        report_template=template,
+        scan_results=scan_result,
+    )
+    
+    console.print(f"[bold blue]Generating report from:[/bold blue] {file}")
+    
+    from redteam_analyzer.modules.report.plugin import ReportPlugin
+    plugin = ReportPlugin()
+    asyncio.run(plugin.run(target_obj, config))
+    
+    if output:
+        console.print(f"[green]Report saved to: {output}[/green]")
+    else:
+        console.print("[yellow]Report printed to stdout[/yellow]")
+
+
+@config_app.command("validate")
+def config_validate(
+    config_path: str = typer.Argument("config.yaml", help="Config file to validate"),
+) -> None:
+    """Validate a configuration file."""
+    path = Path(config_path)
+    if not path.exists():
+        console.print(f"[red]Config file not found: {config_path}[/red]")
+        raise typer.Exit(code=1)
+    
+    try:
+        with open(path, "r") as f:
+            data = yaml.safe_load(f)
+        
+        if not isinstance(data, dict):
+            console.print("[red]Invalid config: root must be a mapping[/red]")
+            raise typer.Exit(code=1)
+        
+        # Try to construct ScanConfig
+        scope_data = data.pop("scope", {})
+        scope = ScopeConfig(**scope_data)
+        config = ScanConfig(**data, scope=scope)
+        
+        console.print(f"[green]Config file is valid: {config_path}[/green]")
+        console.print(f"  Modules: {config.modules}")
+        console.print(f"  Output format: {config.output_format}")
+        console.print(f"  Dry run: {config.dry_run}")
+    except Exception as e:
+        console.print(f"[red]Config validation failed: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@plugin_app.command("list")
+def plugin_list() -> None:
+    """List all available scan plugins."""
+    pm = PluginManager()
+    discovered = pm.discover_plugins()
+    
+    if not discovered:
+        console.print("[yellow]No plugins found[/yellow]")
+        return
+    
+    from rich.table import Table
+    table = Table(title="Available Plugins")
+    table.add_column("Name", style="bold")
+    table.add_column("Description")
+    table.add_column("Requires Auth")
+    
+    for name in sorted(discovered):
+        plugin = pm.load_plugin(name)
+        if plugin:
+            table.add_row(
+                name,
+                plugin.description,
+                "Yes" if plugin.requires_auth else "No",
+            )
+    
+    console.print(table)
+
+
+def _parse_target(target_str: str) -> Target:
+    """Parse a target string into a Target object.
+    
+    Supports: IP, hostname, URL, CIDR.
+    """
+    import re
+    
+    # CIDR notation
+    if "/" in target_str and re.match(r"^\d+\.\d+\.\d+\.\d+/\d+$", target_str):
+        return Target(cidr=target_str)
+    
+    # URL
+    if target_str.startswith(("http://", "https://")):
+        return Target(url=target_str)
+    
+    # IP address
+    if re.match(r"^\d+\.\d+\.\d+\.\d+$", target_str):
+        return Target(ip=target_str)
+    
+    # Hostname/domain
+    return Target(hostname=target_str)
+
+
+if __name__ == "__main__":
+    app()

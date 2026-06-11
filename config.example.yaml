@@ -1,0 +1,100 @@
+# redteam-analyzer configuration file
+# Copy this file to config.yaml and customize as needed.
+#
+# All options are optional — defaults are safe (dry_run=true).
+# Environment variables override file values (prefix: RTA_)
+
+# --- Scan Options ---
+
+# Run in dry-run mode (no network calls). Default: true
+dry_run: true
+
+# Modules to execute. Default: [recon, scan, vuln, report]
+# Available: recon, scan, vuln, report
+modules:
+  - recon
+  - scan
+  - vuln
+  - report
+
+# Auth token for intrusive modules (nuclei, active scanning).
+# Without this, intrusive modules are skipped.
+# env: RTA_AUTH_TOKEN
+# auth_token: "your-token-here"
+
+# Run passive reconnaissance only (no direct requests to target).
+# passive_only: false
+
+# Port scanning backend: "nmap" or "masscan"
+# Requires the corresponding tool to be installed.
+# scan_backend: "nmap"
+
+# --- Output ---
+
+# Output formats. Default: [json]
+# Available: json, html, markdown
+output_format:
+  - json
+
+# Output file path (without extension — extension is added automatically).
+# If omitted, results are printed to stdout.
+# output_path: "reports/scan-results"
+
+# HTML report template: "default" or "executive"
+# report_template: "default"
+
+# --- Scope & Rate Limiting ---
+
+# Scope configuration — defines what targets are allowed.
+# CRITICAL: Always restrict scope to authorized targets only.
+scope:
+  # Allowed CIDR ranges (requires written authorization)
+  allowed_cidrs:
+    - "192.168.0.0/16"
+    # - "10.0.0.0/8"
+
+  # Allowed domains (exact match or wildcard subdomain)
+  allowed_domains:
+    - "example.com"
+    - "*.example.com"
+    # - "localhost"
+
+  # Paths to exclude from directory brute-force
+  excluded_paths:
+    - "/admin"
+    - "/.git"
+
+  # Max requests per second (per domain). Default: 10
+  rate_limit_per_second: 10
+
+  # Max requests per second with auth token. Default: 100
+  auth_rate_limit_per_second: 100
+
+  # Auth tokens for rate-limited endpoints
+  # auth_tokens: []
+
+# --- Nuclei (Vulnerability Scanning) ---
+
+# Nuclei-specific configuration
+nuclei_config:
+  # Template tags to run (empty = all)
+  # tags: ["cve", "misconfig"]
+
+  # Severity filter
+  # severity: ["critical", "high"]
+
+  # Rate limit for nuclei (requests/second)
+  # rate_limit: 150
+
+# --- Environment Variable Overrides ---
+# All options can be overridden via environment variables:
+#
+# RTA_DRY_RUN=true
+# RTA_AUTH_TOKEN=your-token
+# RTA_MODULES=recon,scan
+# RTA_OUTPUT_FORMAT=json,html
+# RTA_OUTPUT_PATH=results.json
+# RTA_PASSIVE_ONLY=true
+# RTA_SCAN_BACKEND=nmap
+# RTA_REPORT_TEMPLATE=executive
+# RTA_SCOPE_RATE_LIMIT=20
