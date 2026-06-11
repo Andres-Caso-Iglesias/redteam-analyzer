@@ -72,14 +72,21 @@ def scan(
     passive_only: bool = typer.Option(
         False, "--passive-only", "-p", help="Passive reconnaissance only"
     ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Verbose output"
+    verbose: int = typer.Option(
+        0, "--verbose", "-v", count=True,
+        help="Verbosity: -v (findings), -vv (+ nmap progress), -vvv (+ raw nmap output)"
     ),
     new_terminal: bool = typer.Option(
         False, "--new-terminal", "-T", help="Open scan in a new terminal window"
     ),
 ) -> None:
-    """Run a security scan against a target."""
+    """Run a security scan against a target.
+
+    Verbosity levels:
+      -v    Show detailed findings after scan
+      -vv   Also show nmap progress percentage
+      -vvv  Also show raw nmap stderr output
+    """
     # If --new-terminal, relaunch in new terminal and exit
     if new_terminal:
         cmd_args = ["scan", target]
@@ -89,8 +96,8 @@ def scan(
         if output:
             cmd_args.extend(["-o", output])
         if output_format:
-            for f in output_format:
-                cmd_args.extend(["-f", f])
+            for fmt in output_format:
+                cmd_args.extend(["-f", fmt])
         if config:
             cmd_args.extend(["-c", config])
         if dry_run:
@@ -99,7 +106,7 @@ def scan(
             cmd_args.extend(["-t", auth_token])
         if passive_only:
             cmd_args.append("-p")
-        if verbose:
+        for _ in range(verbose):
             cmd_args.append("-v")
 
         full_cmd = build_rta_command(cmd_args)
@@ -108,9 +115,10 @@ def scan(
         else:
             console.print("[yellow]Could not open new terminal, running here[/yellow]")
         return
+
     # Build target
     target_obj = _parse_target(target)
-    
+
     # Load config
     scan_config = _load_config(config)
     scan_config.dry_run = dry_run
@@ -122,53 +130,87 @@ def scan(
         scan_config.output_path = output
     if output_format:
         scan_config.output_format = output_format
-    
+
     # Execute scan
     console.print(f"[bold blue]Starting scan against:[/bold blue] {target_obj.primary}")
-    
+
     if dry_run:
         console.print("[yellow]DRY RUN MODE — no network calls will be made[/yellow]")
-    
+
     engine = Engine(scan_config)
-    
+
     with create_progress_bar() as progress:
         task = progress.add_task("Scanning...", total=None)
-        
+
         # Progress callback: parse nmap stderr and update progress display
+        # Verbosity levels:
+        #   0 = just spinner (default)
+        #   1 = show port discoveries and key events
+        #   2 = show percentage progress
+        #   3 = show raw nmap output
         def _on_progress(line: str):
             info = parse_nmap_progress(line)
-            if info:
-                if info["type"] == "scanning":
-                    progress.update(task, description=f"Scanning {info['ports']} ports...")
-                elif info["type"] == "port_found":
-                    progress.update(task, description=f"Found port {info['port']}/{info['protocol']}...")
-                elif info["type"] == "completed":
-                    progress.update(task, description=f"Scan done in {info['elapsed']}s")
-                elif info["type"] == "timing":
-                    progress.update(task, description=f"Timing: {info['template']}...")
-                else:
-                    # Show raw nmap output (truncated)
-                    raw = info.get("raw", "")
-                    if len(raw) > 60:
-                        raw = raw[:57] + "..."
-                    progress.update(task, description=raw)
-        
+            if not info:
+                return
+
+            if info["type"] == "progress":
+                # Percentage progress: "SYN Stealth Scan: 15.35% done"
+                pct = info["percent"]
+                phase = info["scan_phase"]
+                remaining = info["remaining"]
+                if verbose >= 2:
+                    progress.update(
+                        task,
+                        description=f"[cyan]{phase}[/cyan] {pct:.1f}% done (ETA {remaining})",
+                    )
+                elif verbose >= 1:
+                    progress.update(task, description=f"{phase}: {pct:.1f}%")
+
+            elif info["type"] == "scanning":
+                progress.update(task, description=f"Scanning {info['ports']} ports...")
+
+            elif info["type"] == "port_found":
+                if verbose >= 1:
+                    console.print(f"  [green]+ Port {info['port']}/{info['protocol']} open[/green]")
+
+            elif info["type"] == "completed":
+                progress.update(task, description=f"Done in {info['elapsed']}s")
+
+            elif info["type"] == "stats":
+                if verbose >= 2:
+                    progress.update(
+                        task,
+                        description=f"Elapsed {info['elapsed']} | {info['current_scan']}",
+                    )
+
+            elif info["type"] == "delay_increase":
+                if verbose >= 2:
+                    console.print(
+                        f"  [yellow]! Network delay increased: {info['from_ms']}→{info['to_ms']}ms[/yellow]"
+                    )
+
+            elif info["type"] == "info" and verbose >= 3:
+                raw = info.get("raw", "")
+                if len(raw) > 70:
+                    raw = raw[:67] + "..."
+                progress.update(task, description=raw)
+
         scan_config._on_progress = _on_progress
         result = asyncio.run(engine.scan(target_obj))
         progress.update(task, completed=True, description="Scan complete")
-    
+
     # Output results
     print_summary(result)
-    
+
     if result.findings:
         table = create_findings_table(result.findings)
         console.print(table)
-        
-        if verbose:
+
+        if verbose >= 1:
             console.print("\n[bold]Detailed Findings:[/bold]")
             for finding in result.findings:
                 print_finding(finding)
-    
+
     # Save report if output specified
     if output:
         console.print(f"\n[green]Report saved to: {output}[/green]")
@@ -183,8 +225,9 @@ def recon(
     output: Optional[str] = typer.Option(
         None, "--output", "-o", help="Output file path"
     ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Verbose output"
+    verbose: int = typer.Option(
+        0, "--verbose", "-v", count=True,
+        help="Verbosity: -v (findings), -vv (+ details)"
     ),
     new_terminal: bool = typer.Option(
         False, "--new-terminal", "-T", help="Open recon in a new terminal window"
@@ -198,7 +241,7 @@ def recon(
             cmd_args.append("-p")
         if output:
             cmd_args.extend(["-o", output])
-        if verbose:
+        for _ in range(verbose):
             cmd_args.append("-v")
 
         full_cmd = build_rta_command(cmd_args)
@@ -231,7 +274,7 @@ def recon(
         table = create_findings_table(result.findings)
         console.print(table)
         
-        if verbose:
+        if verbose >= 1:
             for finding in result.findings:
                 print_finding(finding)
 

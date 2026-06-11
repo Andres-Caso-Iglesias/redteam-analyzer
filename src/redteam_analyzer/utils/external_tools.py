@@ -142,10 +142,12 @@ def parse_nmap_progress(line: str) -> Optional[Dict[str, Any]]:
     """Parse nmap stderr line for progress information.
 
     Nmap writes progress to stderr like:
+        "SYN Stealth Scan Timing: About 15.35% done; ETC: 14:46 (0:02:51 remaining)"
         "Scanning 10.129.95.191 [1000 ports]"
         "Completed SYN Stealth Scan at 14:32, 45.23s elapsed"
-        "SYN Stealth Scan: Timing: -T4 (1000 ms)"
-        "Scanning 10.129.95.191 [1 port]"
+        "Discovered open port 22/tcp on 10.129.95.191"
+        "Increasing send delay for 10.129.95.191 from 0 to 5 due to ..."
+        "Stats: 0:16:53 elapsed; 0 hosts completed (1 up), 1 undergoing SYN Stealth Scan"
 
     Args:
         line: A single stderr line from nmap
@@ -157,22 +159,48 @@ def parse_nmap_progress(line: str) -> Optional[Dict[str, Any]]:
     if not line:
         return None
 
-    # Scan progress line: "Scanning host [X ports]"
+    # Percentage progress: "SYN Stealth Scan Timing: About 15.35% done; ETC: 14:46 (0:02:51 remaining)"
+    match = re.search(
+        r"(\w[\w\s]*?)\s+Timing:\s+About\s+([\d.]+)%\s+done;"
+        r"\s+ETC:\s+(\d+:\d+)\s+\(([\d:]+)\s+remaining\)",
+        line,
+    )
+    if match:
+        return {
+            "type": "progress",
+            "scan_phase": match.group(1).strip(),
+            "percent": float(match.group(2)),
+            "etc": match.group(3),
+            "remaining": match.group(4),
+            "raw": line,
+        }
+
+    # Stats line: "Stats: 0:16:53 elapsed; 0 hosts completed (1 up), 1 undergoing SYN Stealth Scan"
+    match = re.search(
+        r"Stats:\s+([\d:]+)\s+elapsed;\s+(\d+)\s+hosts?\s+completed.*?(\d+)\s+undergoing\s+(.*)",
+        line,
+    )
+    if match:
+        return {
+            "type": "stats",
+            "elapsed": match.group(1),
+            "hosts_completed": int(match.group(2)),
+            "hosts_active": int(match.group(3)),
+            "current_scan": match.group(4).strip(),
+            "raw": line,
+        }
+
+    # Scan start: "Scanning host [X ports]"
     match = re.search(r"Scanning\s+\S+\s+\[(\d+)\s+ports?\]", line)
     if match:
         return {"type": "scanning", "ports": int(match.group(1)), "raw": line}
 
-    # Completed scan line: "Completed ... at HH:MM, Xs elapsed"
+    # Completed scan: "Completed ... at HH:MM, Xs elapsed"
     match = re.search(r"Completed\s+.+at\s+\d+:\d+,\s+([\d.]+)s\s+elapsed", line)
     if match:
         return {"type": "completed", "elapsed": float(match.group(1)), "raw": line}
 
-    # Timing line: "Timing: -T4 ..."
-    match = re.search(r"Timing:\s+(-T\d)", line)
-    if match:
-        return {"type": "timing", "template": match.group(1), "raw": line}
-
-    # Port progress: "Discovered open port X/tcp on host"
+    # Port found: "Discovered open port X/tcp on host"
     match = re.search(r"Discovered open port (\d+)/(tcp|udp) on", line)
     if match:
         return {
@@ -182,8 +210,18 @@ def parse_nmap_progress(line: str) -> Optional[Dict[str, Any]]:
             "raw": line,
         }
 
-    # Generic progress line (anything from nmap)
-    if "nmap" in line.lower() or "scan" in line.lower() or "port" in line.lower():
+    # Send delay increase (network issues): "Increasing send delay ..."
+    match = re.search(r"Increasing send delay.*?from\s+(\d+)\s+to\s+(\d+)", line)
+    if match:
+        return {
+            "type": "delay_increase",
+            "from_ms": int(match.group(1)),
+            "to_ms": int(match.group(2)),
+            "raw": line,
+        }
+
+    # Generic nmap info line
+    if any(kw in line.lower() for kw in ["nmap", "scan", "port", "host", "timing"]):
         return {"type": "info", "raw": line}
 
     return None
