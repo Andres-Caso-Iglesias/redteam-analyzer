@@ -58,6 +58,9 @@ class ScanPlugin(BasePlugin):
         # Determine backend
         backend = getattr(config, "scan_backend", "nmap")
 
+        # Get progress callback from config if available
+        on_progress = getattr(config, "_on_progress", None)
+
         try:
             if backend == "masscan" and check_tool_installed("masscan"):
                 # Masscan for fast discovery
@@ -67,11 +70,11 @@ class ScanPlugin(BasePlugin):
                 # Follow up with nmap for service detection on discovered ports
                 if open_ports and check_tool_installed("nmap"):
                     port_list = ",".join(p["port"] for p in open_ports)
-                    nmap_results = await run_nmap(scan_target, ports=port_list)
+                    nmap_results = await run_nmap(scan_target, ports=port_list, on_progress=on_progress)
                     open_ports = nmap_extract(nmap_results)
             else:
                 # Default: nmap
-                results = await run_nmap(scan_target)
+                results = await run_nmap(scan_target, on_progress=on_progress)
                 open_ports = nmap_extract(results)
 
             # Convert to findings

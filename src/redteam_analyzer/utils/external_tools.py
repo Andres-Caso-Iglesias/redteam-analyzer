@@ -5,9 +5,10 @@ Wraps nmap, masscan, nuclei, whatweb, etc. with structured output parsing.
 
 import asyncio
 import json
+import re
 import shutil
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 class ToolNotFoundError(Exception):
@@ -58,6 +59,7 @@ async def run_tool(
     cmd: list[str],
     timeout: int = 300,
     input_data: Optional[str] = None,
+    on_progress: Optional[Callable[[str], None]] = None,
 ) -> str:
     """Run an external tool and capture its output.
 
@@ -65,6 +67,7 @@ async def run_tool(
         cmd: Command and arguments as list
         timeout: Timeout in seconds
         input_data: Optional stdin input
+        on_progress: Optional callback for stderr progress lines
 
     Returns:
         Combined stdout output
@@ -88,22 +91,102 @@ async def run_tool(
             stdin=asyncio.subprocess.PIPE if input_data else None,
         )
 
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(input_data.encode() if input_data else None),
-            timeout=timeout,
-        )
-
-        if process.returncode != 0:
-            error_msg = stderr.decode(errors="replace").strip()
-            # Don't raise on non-zero exit — some tools use exit codes for status
-            # Return whatever stdout we got
+        # If no progress callback, use simple communicate()
+        if not on_progress:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(input_data.encode() if input_data else None),
+                timeout=timeout,
+            )
             return stdout.decode(errors="replace")
 
-        return stdout.decode(errors="replace")
+        # With progress callback: read stderr line by line while process runs
+        stdout_chunks = []
+        stderr_task = asyncio.create_task(
+            _read_stderr_progress(process.stderr, on_progress)
+        )
+
+        stdout_data = await asyncio.wait_for(
+            process.stdout.read(),
+            timeout=timeout,
+        )
+        stdout_chunks.append(stdout_data.decode(errors="replace"))
+
+        # Wait for stderr reader to finish
+        await stderr_task
+
+        # Ensure process completes
+        await asyncio.wait_for(process.wait(), timeout=5)
+
+        return "".join(stdout_chunks)
 
     except asyncio.TimeoutError:
         process.kill()
         raise ToolTimeoutError(tool_name, timeout)
+
+
+async def _read_stderr_progress(
+    stderr_stream: asyncio.StreamReader,
+    on_progress: Callable[[str], None],
+) -> None:
+    """Read stderr line by line and forward to progress callback."""
+    while True:
+        line = await stderr_stream.readline()
+        if not line:
+            break
+        text = line.decode(errors="replace").rstrip()
+        if text:
+            on_progress(text)
+
+
+def parse_nmap_progress(line: str) -> Optional[Dict[str, Any]]:
+    """Parse nmap stderr line for progress information.
+
+    Nmap writes progress to stderr like:
+        "Scanning 10.129.95.191 [1000 ports]"
+        "Completed SYN Stealth Scan at 14:32, 45.23s elapsed"
+        "SYN Stealth Scan: Timing: -T4 (1000 ms)"
+        "Scanning 10.129.95.191 [1 port]"
+
+    Args:
+        line: A single stderr line from nmap
+
+    Returns:
+        Parsed progress dict or None if not a progress line
+    """
+    line = line.strip()
+    if not line:
+        return None
+
+    # Scan progress line: "Scanning host [X ports]"
+    match = re.search(r"Scanning\s+\S+\s+\[(\d+)\s+ports?\]", line)
+    if match:
+        return {"type": "scanning", "ports": int(match.group(1)), "raw": line}
+
+    # Completed scan line: "Completed ... at HH:MM, Xs elapsed"
+    match = re.search(r"Completed\s+.+at\s+\d+:\d+,\s+([\d.]+)s\s+elapsed", line)
+    if match:
+        return {"type": "completed", "elapsed": float(match.group(1)), "raw": line}
+
+    # Timing line: "Timing: -T4 ..."
+    match = re.search(r"Timing:\s+(-T\d)", line)
+    if match:
+        return {"type": "timing", "template": match.group(1), "raw": line}
+
+    # Port progress: "Discovered open port X/tcp on host"
+    match = re.search(r"Discovered open port (\d+)/(tcp|udp) on", line)
+    if match:
+        return {
+            "type": "port_found",
+            "port": int(match.group(1)),
+            "protocol": match.group(2),
+            "raw": line,
+        }
+
+    # Generic progress line (anything from nmap)
+    if "nmap" in line.lower() or "scan" in line.lower() or "port" in line.lower():
+        return {"type": "info", "raw": line}
+
+    return None
 
 
 def parse_xml_output(xml_str: str) -> Dict[str, Any]:

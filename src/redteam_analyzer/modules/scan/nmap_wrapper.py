@@ -5,7 +5,7 @@ Executes nmap and parses XML output into structured data.
 
 import logging
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from redteam_analyzer.utils.external_tools import (
     ToolNotFoundError,
@@ -24,6 +24,7 @@ async def run_nmap(
     ports: Optional[str] = None,
     flags: Optional[List[str]] = None,
     timeout: int = 600,
+    on_progress: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Run nmap scan and parse XML output.
 
@@ -32,6 +33,7 @@ async def run_nmap(
         ports: Port specification (e.g., "80,443", "1-1000", "-")
         flags: Additional nmap flags
         timeout: Timeout in seconds
+        on_progress: Optional callback for stderr progress lines
 
     Returns:
         Parsed nmap results dictionary
@@ -59,7 +61,7 @@ async def run_nmap(
 
     logger.info(f"Running nmap: {' '.join(cmd)}")
 
-    output = await run_tool(cmd, timeout=timeout)
+    output = await run_tool(cmd, timeout=timeout, on_progress=on_progress)
 
     return parse_nmap_xml(output)
 

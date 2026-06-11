@@ -21,6 +21,7 @@ from redteam_analyzer.cli.output import (
     print_finding,
     print_summary,
 )
+from redteam_analyzer.utils.external_tools import parse_nmap_progress
 
 app = typer.Typer(
     name="redteam-analyzer",
@@ -100,8 +101,29 @@ def scan(
     
     with create_progress_bar() as progress:
         task = progress.add_task("Scanning...", total=None)
+        
+        # Progress callback: parse nmap stderr and update progress display
+        def _on_progress(line: str):
+            info = parse_nmap_progress(line)
+            if info:
+                if info["type"] == "scanning":
+                    progress.update(task, description=f"Scanning {info['ports']} ports...")
+                elif info["type"] == "port_found":
+                    progress.update(task, description=f"Found port {info['port']}/{info['protocol']}...")
+                elif info["type"] == "completed":
+                    progress.update(task, description=f"Scan done in {info['elapsed']}s")
+                elif info["type"] == "timing":
+                    progress.update(task, description=f"Timing: {info['template']}...")
+                else:
+                    # Show raw nmap output (truncated)
+                    raw = info.get("raw", "")
+                    if len(raw) > 60:
+                        raw = raw[:57] + "..."
+                    progress.update(task, description=raw)
+        
+        scan_config._on_progress = _on_progress
         result = asyncio.run(engine.scan(target_obj))
-        progress.update(task, completed=True)
+        progress.update(task, completed=True, description="Scan complete")
     
     # Output results
     print_summary(result)
