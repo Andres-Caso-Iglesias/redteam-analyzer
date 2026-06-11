@@ -128,14 +128,28 @@ async def _read_stderr_progress(
     stderr_stream: asyncio.StreamReader,
     on_progress: Callable[[str], None],
 ) -> None:
-    """Read stderr line by line and forward to progress callback."""
+    """Read stderr and forward to progress callback.
+
+    Handles both newline-separated and carriage-return-separated output
+    (nmap uses \r for progress updates).
+    """
+    buffer = ""
     while True:
-        line = await stderr_stream.readline()
-        if not line:
+        chunk = await stderr_stream.read(1024)
+        if not chunk:
             break
-        text = line.decode(errors="replace").rstrip()
-        if text:
-            on_progress(text)
+        text = chunk.decode(errors="replace")
+        # Split on both \n and \r
+        for char in text:
+            if char in ("\n", "\r"):
+                if buffer.strip():
+                    on_progress(buffer.strip())
+                buffer = ""
+            else:
+                buffer += char
+    # Flush remaining buffer
+    if buffer.strip():
+        on_progress(buffer.strip())
 
 
 def parse_nmap_progress(line: str) -> Optional[Dict[str, Any]]:
