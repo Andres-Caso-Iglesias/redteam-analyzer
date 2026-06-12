@@ -86,7 +86,7 @@ async def directory_bust(
         return findings
 
     words = wl_path.read_text().splitlines()
-    words = [w.strip() for w in words if w.strip()]
+    words = [w.strip() for w in words if w.strip() and not w.startswith("#")]
 
     # Add extensions if provided
     if extensions:
