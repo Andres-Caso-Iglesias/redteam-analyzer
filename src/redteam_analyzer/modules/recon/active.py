@@ -74,8 +74,8 @@ async def directory_bust(
     """
     findings = []
 
-    # Determine base URL
-    base_url = target.url or f"http://{target.hostname}"
+    # Determine base URL — use ip if hostname is not set
+    base_url = target.url or f"http://{target.hostname or target.ip}"
     if not base_url.endswith("/"):
         base_url += "/"
 
@@ -165,8 +165,8 @@ async def tech_fingerprint(
     """
     findings = []
 
-    # Determine base URL
-    base_url = target.url or f"http://{target.hostname}"
+    # Determine base URL — use ip if hostname is not set
+    base_url = target.url or f"http://{target.hostname or target.ip}"
 
     try:
         async with httpx.AsyncClient(
@@ -270,8 +270,8 @@ async def header_analysis(
     """
     findings = []
 
-    # Determine base URL
-    base_url = target.url or f"http://{target.hostname}"
+    # Determine base URL — use ip if hostname is not set
+    base_url = target.url or f"http://{target.hostname or target.ip}"
 
     try:
         async with httpx.AsyncClient(

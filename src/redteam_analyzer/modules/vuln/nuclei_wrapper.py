@@ -71,8 +71,11 @@ async def run_nuclei(
 
     cmd = ["nuclei"]
 
-    # Target
-    cmd.extend(["-target", target])
+    # Target — nuclei needs URL format, add http:// if bare IP/hostname
+    nuclei_target = target
+    if not target.startswith(("http://", "https://")):
+        nuclei_target = f"http://{target}"
+    cmd.extend(["-target", nuclei_target])
 
     # Output format
     cmd.extend(["-jsonl"])
