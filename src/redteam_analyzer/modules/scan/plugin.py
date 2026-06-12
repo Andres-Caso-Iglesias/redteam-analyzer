@@ -58,7 +58,8 @@ class ScanPlugin(BasePlugin):
         # Determine backend
         backend = getattr(config, "scan_backend", "nmap")
 
-        # Get progress callback from config if available
+        # Get scan profile and progress callback from config
+        scan_profile = getattr(config, "scan_profile", "stealth")
         on_progress = getattr(config, "on_progress", None)
 
         try:
@@ -70,11 +71,13 @@ class ScanPlugin(BasePlugin):
                 # Follow up with nmap for service detection on discovered ports
                 if open_ports and check_tool_installed("nmap"):
                     port_list = ",".join(p["port"] for p in open_ports)
-                    nmap_results = await run_nmap(scan_target, ports=port_list, on_progress=on_progress)
+                    nmap_results = await run_nmap(
+                        scan_target, ports=port_list, on_progress=on_progress, scan_profile=scan_profile
+                    )
                     open_ports = nmap_extract(nmap_results)
             else:
                 # Default: nmap
-                results = await run_nmap(scan_target, on_progress=on_progress)
+                results = await run_nmap(scan_target, on_progress=on_progress, scan_profile=scan_profile)
                 open_ports = nmap_extract(results)
 
             # Convert to findings

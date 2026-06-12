@@ -1,6 +1,7 @@
 """Nmap subprocess wrapper for port scanning.
 
 Executes nmap and parses XML output into structured data.
+Supports scan profiles: stealth, normal, aggressive.
 """
 
 import logging
@@ -15,8 +16,21 @@ from redteam_analyzer.utils.external_tools import (
 
 logger = logging.getLogger(__name__)
 
-# Default nmap flags
-DEFAULT_FLAGS = ["-sV", "-O", "--open"]
+# Scan profiles — from quietest to loudest
+SCAN_PROFILES = {
+    "stealth": {
+        "flags": ["-sS", "--top-ports", "1000", "-T2", "--max-retries", "2", "--open"],
+        "description": "SYN scan, top 1000 ports, slow timing, minimal retries",
+    },
+    "normal": {
+        "flags": ["-sV", "--top-ports", "1000", "-T3", "--open"],
+        "description": "SYN scan with version detection, top 1000 ports",
+    },
+    "aggressive": {
+        "flags": ["-sV", "-O", "--open"],
+        "description": "Full port scan with version + OS detection (noisy)",
+    },
+}
 
 
 async def run_nmap(
@@ -25,15 +39,17 @@ async def run_nmap(
     flags: Optional[List[str]] = None,
     timeout: int = 600,
     on_progress: Optional[Callable[[str], None]] = None,
+    scan_profile: str = "stealth",
 ) -> Dict[str, Any]:
     """Run nmap scan and parse XML output.
 
     Args:
         target: Target IP or hostname
         ports: Port specification (e.g., "80,443", "1-1000", "-")
-        flags: Additional nmap flags
+        flags: Additional nmap flags (overrides profile defaults)
         timeout: Timeout in seconds
         on_progress: Optional callback for stderr progress lines
+        scan_profile: Scan profile: "stealth", "normal", or "aggressive"
 
     Returns:
         Parsed nmap results dictionary
@@ -46,8 +62,12 @@ async def run_nmap(
 
     cmd = ["nmap"]
 
-    # Add flags
-    cmd.extend(flags or DEFAULT_FLAGS)
+    # Use profile flags unless explicit flags are provided
+    if flags:
+        cmd.extend(flags)
+    else:
+        profile = SCAN_PROFILES.get(scan_profile, SCAN_PROFILES["stealth"])
+        cmd.extend(profile["flags"])
 
     # Force progress output to stderr every 5 seconds
     cmd.extend(["--stats-every=5s"])

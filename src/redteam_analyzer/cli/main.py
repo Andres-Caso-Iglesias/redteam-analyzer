@@ -79,6 +79,10 @@ def scan(
     new_terminal: bool = typer.Option(
         False, "--new-terminal", "-T", help="Open scan in a new terminal window"
     ),
+    profile: str = typer.Option(
+        "stealth", "--profile",
+        help="Scan profile: stealth (quiet), normal, aggressive (noisy)"
+    ),
 ) -> None:
     """Run a security scan against a target.
 
@@ -124,6 +128,7 @@ def scan(
     scan_config.dry_run = dry_run
     scan_config.auth_token = auth_token
     scan_config.passive_only = passive_only
+    scan_config.scan_profile = profile
     if modules:
         scan_config.modules = modules
     if output:

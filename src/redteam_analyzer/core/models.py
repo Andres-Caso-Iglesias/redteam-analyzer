@@ -155,6 +155,7 @@ class ScanConfig(BaseModel):
     parallel: bool = False
     passive_only: bool = False
     scan_backend: str = "nmap"  # "nmap" or "masscan"
+    scan_profile: str = "stealth"  # "stealth", "normal", "aggressive"
     nuclei_config: Dict[str, Any] = Field(default_factory=dict)  # nuclei templates/tags/severity
     report_template: str = "default"  # "default" or "executive"
     scan_results: Optional["ScanResult"] = None  # Results to export (for report plugin)
