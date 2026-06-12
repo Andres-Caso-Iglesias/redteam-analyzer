@@ -1,7 +1,7 @@
 """Terminal detection and launching for redteam-analyzer.
 
 Opens scan/recon commands in a new terminal window.
-Supports Linux (Kali), macOS, and Windows.
+Supports tmux, Linux (Kali), macOS, and Windows.
 """
 
 import os
@@ -23,12 +23,27 @@ LINUX_TERMINALS = [
 ]
 
 
+def is_inside_tmux() -> bool:
+    """Check if we are running inside a tmux session.
+
+    Returns:
+        True if TMUX environment variable is set
+    """
+    return os.environ.get("TMUX") is not None
+
+
 def detect_terminal() -> Optional[str]:
     """Detect an available terminal emulator on the system.
+
+    Checks tmux first, then graphical terminal emulators.
 
     Returns:
         Terminal command name or None if not found
     """
+    # tmux takes priority when inside a session
+    if is_inside_tmux() and shutil.which("tmux"):
+        return "tmux"
+
     system = platform.system()
 
     if system == "Linux":
@@ -67,7 +82,9 @@ def open_new_terminal(args: List[str], terminal: Optional[str] = None) -> bool:
         return False
 
     try:
-        if system == "Linux":
+        if term == "tmux":
+            _launch_tmux(args)
+        elif system == "Linux":
             _launch_linux(term, args)
         elif system == "Darwin":
             _launch_macos(args)
@@ -80,6 +97,21 @@ def open_new_terminal(args: List[str], terminal: Optional[str] = None) -> bool:
 
     except Exception:
         return False
+
+
+def _launch_tmux(args: List[str]) -> None:
+    """Launch command in a new tmux window.
+
+    Uses 'tmux new-window' to create a new window in the current session
+    and run the command there.
+    """
+    cmd_str = " ".join(args)
+    subprocess.Popen(
+        ["tmux", "new-window", cmd_str],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _launch_linux(terminal: str, args: List[str]) -> None:

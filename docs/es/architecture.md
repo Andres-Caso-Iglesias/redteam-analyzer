@@ -7,7 +7,7 @@ Arquitectura tecnica de redteam-analyzer.
 ## Principios de Diseno
 
 1. **Arquitectura basada en plugins** — Cada capacidad de escaneo es un plugin independiente. El motor central no conoce herramientas especificas.
-2. **Protecciones legales en codigo** — La validacion de alcance, el rate limiting y el control de autenticacion se aplican a nivel del motor, no se anaden como elemento posterior.
+2. **Protecciones legales en codigo** — La validacion de alcance, el rate limiting y el control de autenticacion se aplican a nivel del motor, no se añaden como elemento posterior.
 3. **Defensa en profundidad** — Los fallos de plugins no crashean el escaneo. Cada plugin esta aislado y sus errores se capturan.
 4. **Aislamiento de subprocess** — Las herramientas externas (nmap, nuclei, whatweb) se ejecutan como subprocess. Sin vinculaciones de biblioteca Python que puedan introducir conflictos de version.
 

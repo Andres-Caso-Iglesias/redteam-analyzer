@@ -49,6 +49,9 @@ async def run_nmap(
     # Add flags
     cmd.extend(flags or DEFAULT_FLAGS)
 
+    # Force progress output to stderr every 5 seconds
+    cmd.extend(["--stats-every=5s"])
+
     # Add port specification
     if ports:
         cmd.extend(["-p", ports])
