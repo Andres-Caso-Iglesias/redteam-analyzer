@@ -39,6 +39,7 @@ redteam-analyzer scan <TARGET> [OPTIONS]
 | `--passive-only` | `-p` | Passive recon only |
 | `--verbose` | `-v` | Verbosity level (repeatable) |
 | `--new-terminal` | `-T` | Open scan in a new terminal window |
+| `--profile` | | Scan profile: stealth (default), normal, aggressive |
 
 ### Verbosity Levels
 
@@ -50,6 +51,20 @@ The `-v` flag can be stacked to increase output detail:
 | 1 | `-v` | Detailed findings after scan |
 | 2 | `-vv` | Real-time nmap progress percentage |
 | 3 | `-vvv` | Raw nmap output line by line |
+
+### Scan Profiles
+
+The `--profile` flag controls scan intensity and noise level:
+
+| Profile | Flags | Ports | Timing | Noise |
+|---------|-------|-------|--------|-------|
+| `stealth` (default) | `-sS --top-ports 1000 -T2 --max-retries 2` | 1000 | Slow | Low |
+| `normal` | `-sV --top-ports 1000 -T3` | 1000 | Moderate | Medium |
+| `aggressive` | `-sV -O` | 65535 | Normal | High |
+
+- **stealth**: SYN scan, top 1000 ports, slow timing to avoid IDS detection
+- **normal**: Version detection on top 1000 ports, moderate timing
+- **aggressive**: Full port scan with version + OS detection (original default, very noisy)
 
 ### Examples
 

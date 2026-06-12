@@ -253,13 +253,112 @@ El flag `-T` para abrir una nueva ventana de terminal no funciona. El comando se
 
 El flag `--new-terminal` intenta detectar y lanzar un emulador de terminal grafico (gnome-terminal, xfce4-terminal, etc.). Cuando se ejecuta dentro de tmux, estos terminales graficos pueden no ser accesibles, o las variables de entorno (`$DISPLAY`, `$TERM`) pueden no apuntar a una sesion grafica.
 
-### Estado Actual
+### Solucion
 
-Diferido. El flag esta implementado pero retrocede gracefulmente a ejecutar en el terminal actual. Una mejora futura seria detectar tmux y usar `tmux new-window` en su lugar.
+Se agrego deteccion de tmux via la variable de entorno `$TMUX`. Cuando se esta dentro de tmux, la herramienta usa `tmux new-window` en lugar de intentar lanzar un terminal grafico. tmux tiene prioridad sobre terminales graficos cuando se esta dentro de una sesion.
 
-### Solucion Alternativa
+**Archivo:** `src/redteam_analyzer/cli/terminal.py`
 
-Ejecuta el escaneo directamente sin `-T`. Usa paneles o ventanas de tmux manualmente para paralelizar trabajo.
+```python
+def is_inside_tmux() -> bool:
+    return os.environ.get("TMUX") is not None
+
+def detect_terminal():
+    if is_inside_tmux() and shutil.which("tmux"):
+        return "tmux"
+    # ... deteccion de terminales graficos
+```
+
+---
+
+## 8. Progreso de nmap No Se Muestra (stdout vs stderr)
+
+### Sintomas
+
+Incluso despues de arreglar el problema de carriage return y el callback Pydantic, el CLI seguia sin mostrar actualizaciones de progreso de nmap. El spinner permanecia estatico durante todo el escaneo.
+
+### Causa Raiz
+
+Cuando nmap se ejecuta con `-oX -` (salida XML a stdout), las actualizaciones de progreso se escriben a **stdout** mezcladas con el XML, no a stderr. El callback `_read_stderr_progress` solo lee stderr, por lo que nunca recibe lineas de progreso.
+
+### Solucion
+
+Se agrego `--stats-every=5s` al comando de nmap. Este flag fuerza a nmap a escribir estadisticas de progreso a **stderr** cada 5 segundos, independientemente del formato de salida.
+
+**Archivo:** `src/redteam_analyzer/modules/scan/nmap_wrapper.py`
+
+```python
+# Forzar salida de progreso a stderr cada 5 segundos
+cmd.extend(["--stats-every=5s"])
+```
+
+### Leccion Aprendida
+
+nmap `-oX -` envia progreso a stdout, no a stderr. El flag `--stats-every=N` es requerido para forzar la salida de progreso a stderr para captura de subprocess.
+
+---
+
+## 9. Construccion de URL Falla con IPs Puras
+
+### Sintomas
+
+```
+Fingerprint request failed:
+Header analysis request failed:
+```
+
+El modulo de recon falla todas las peticiones HTTP cuando el objetivo es una IP pura (ej: `10.129.43.129`).
+
+### Causa Raiz
+
+Cuando el objetivo es una IP pura, `_parse_target()` crea `Target(ip="10.129.43.129")` con `hostname=None` y `url=None`. Las funciones de recon construyen URLs como:
+
+```python
+base_url = target.url or f"http://{target.hostname}"  # Se convierte en "http://None"
+```
+
+Como tanto `target.url` como `target.hostname` son `None`, la URL se convierte en `http://None`, causando que todas las peticiones HTTP fallen.
+
+### Solucion
+
+Se cambio la construccion de URL en todas las funciones de recon para usar `target.ip` como respaldo:
+
+```python
+base_url = target.url or f"http://{target.hostname or target.ip}"
+```
+
+**Archivos:**
+- `src/redteam_analyzer/modules/recon/active.py` — `tech_fingerprint()`, `header_analysis()`, `directory_bust()`
+- `src/redteam_analyzer/modules/vuln/nuclei_wrapper.py` — `run_nuclei()` agrega prefijo `http://` a IPs puras
+
+### Leccion Aprendida
+
+El modelo `Target` puede tener `ip` configurado pero `hostname=None` cuando el usuario pasa una IP pura. Siempre verifica todos los campos del Target (`ip`, `hostname`, `url`) al construir URLs.
+
+---
+
+## 10. Formato de Target para Nuclei
+
+### Sintomas
+
+Nuclei se timeout o falla al conectarse cuando se le da una IP pura.
+
+### Causa Raiz
+
+Nuclei espera targets en formato URL (`http://IP` o `https://IP`). Cuando se le da una IP pura como `10.129.43.129`, no sabe que protocolo usar.
+
+### Solucion
+
+Se agrego logica de prefijo de URL en `run_nuclei()`:
+
+```python
+nuclei_target = target
+if not target.startswith(("http://", "https://")):
+    nuclei_target = f"http://{target}"
+cmd.extend(["-target", nuclei_target])
+```
+
+**Archivo:** `src/redteam_analyzer/modules/vuln/nuclei_wrapper.py`
 
 ---
 
@@ -270,7 +369,10 @@ Ejecuta el escaneo directamente sin `-T`. Usa paneles o ventanas de tmux manualm
 | Descubrimiento de submodulos en PluginManager | `core/plugin_manager.py` | Busqueda de submodulos para subclases de `BasePlugin` |
 | Bypass del rate limiter TokenBucket | `utils/rate_limiter.py` | Cambio de `<= 0` a `< 1` |
 | Pydantic v2 descarta on_progress | `core/models.py`, `cli/main.py`, `modules/scan/plugin.py` | Campo oficial `on_progress` en Pydantic |
-| Progreso de nmap no se muestra | `utils/external_tools.py` | Reescritura del lector de stderr para manejar `\r` |
+| Progreso de nmap no se muestra (\r) | `utils/external_tools.py` | Reescritura del lector de stderr para manejar `\r` |
+| Progreso de nmap no se muestra (stdout) | `modules/scan/nmap_wrapper.py` | Agregado `--stats-every=5s` para forzar progreso a stderr |
 | Error de indentacion | `modules/scan/plugin.py` | Correccion de indentacion extra |
 | PEP 668 en Kali | N/A (entorno) | Usar `python3 -m venv .venv` |
-| `--new-terminal` en tmux | `cli/terminal.py` | Diferido; retrocede gracefulmente |
+| `--new-terminal` en tmux | `cli/terminal.py` | Deteccion de tmux y soporte `tmux new-window` |
+| Construccion de URL con IPs puras | `modules/recon/active.py`, `modules/vuln/nuclei_wrapper.py` | Usar `target.ip` como respaldo cuando `hostname` es None |
+| Formato de target para nuclei | `modules/vuln/nuclei_wrapper.py` | Agregar prefijo `http://` a IPs puras/hostnames |

@@ -39,6 +39,7 @@ redteam-analyzer scan <TARGET> [OPTIONS]
 | `--passive-only` | `-p` | Solo reconocimiento pasivo |
 | `--verbose` | `-v` | Nivel de verbosidad (repetible) |
 | `--new-terminal` | `-T` | Abrir escaneo en una nueva ventana de terminal |
+| `--profile` | | Perfil de escaneo: stealth (predeterminado), normal, aggressive |
 
 ### Niveles de Verbosidad
 
@@ -50,6 +51,20 @@ El flag `-v` puede apilarse para aumentar el detalle de la salida:
 | 1 | `-v` | Hallazgos detallados despues del escaneo |
 | 2 | `-vv` | Porcentaje de progreso de nmap en tiempo real |
 | 3 | `-vvv` | Salida cruda de nmap linea por linea |
+
+### Perfiles de Escaneo
+
+El flag `--profile` controla la intensidad y el nivel de ruido del escaneo:
+
+| Perfil | Flags | Puertos | Timing | Ruido |
+|--------|-------|---------|--------|-------|
+| `stealth` (predeterminado) | `-sS --top-ports 1000 -T2 --max-retries 2` | 1000 | Lento | Bajo |
+| `normal` | `-sV --top-ports 1000 -T3` | 1000 | Moderado | Medio |
+| `aggressive` | `-sV -O` | 65535 | Normal | Alto |
+
+- **stealth**: SYN scan, top 1000 puertos, timing lento para evitar deteccion IDS
+- **normal**: Deteccion de version en top 1000 puertos, timing moderado
+- **aggressive**: Escaneo completo de puertos con version + deteccion de SO (default original, muy ruidoso)
 
 ### Ejemplos
 

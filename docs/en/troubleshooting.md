@@ -273,13 +273,112 @@ The `-T` flag to open a new terminal window does not work. The command either ha
 
 The `--new-terminal` flag attempts to detect and launch a graphical terminal emulator (gnome-terminal, xfce4-terminal, etc.). When running inside tmux, these GUI terminals may not be accessible, or the environment variables (`$DISPLAY`, `$TERM`) may not point to a graphical session.
 
-### Current Status
+### Solution
 
-Deferred. The flag is implemented but falls back gracefully to running in the current terminal. A future improvement would be to detect tmux and use `tmux new-window` instead.
+Added tmux detection via the `$TMUX` environment variable. When inside tmux, the tool uses `tmux new-window` instead of trying to launch a graphical terminal. tmux takes priority over graphical terminals when inside a session.
 
-### Workaround
+**File:** `src/redteam_analyzer/cli/terminal.py`
 
-Run the scan directly without `-T`. Use tmux panes or windows manually to parallelize work.
+```python
+def is_inside_tmux() -> bool:
+    return os.environ.get("TMUX") is not None
+
+def detect_terminal():
+    if is_inside_tmux() and shutil.which("tmux"):
+        return "tmux"
+    # ... graphical terminal detection
+```
+
+---
+
+## 8. Nmap Progress Not Displayed (stdout vs stderr)
+
+### Symptoms
+
+Even after fixing the carriage return issue and the Pydantic callback issue, the CLI still showed no progress updates from nmap. The spinner remained static throughout the scan.
+
+### Root Cause
+
+When nmap runs with `-oX -` (XML output to stdout), progress updates are written to **stdout** mixed with the XML output, not to stderr. The `_read_stderr_progress` callback only reads stderr, so it never receives progress lines.
+
+### Solution
+
+Added `--stats-every=5s` to the nmap command. This flag forces nmap to write progress statistics to **stderr** every 5 seconds, regardless of output format.
+
+**File:** `src/redteam_analyzer/modules/scan/nmap_wrapper.py`
+
+```python
+# Force progress output to stderr every 5 seconds
+cmd.extend(["--stats-every=5s"])
+```
+
+### Lesson Learned
+
+nmap `-oX -` sends progress to stdout, not stderr. The `--stats-every=N` flag is required to force progress output to stderr for subprocess capture.
+
+---
+
+## 9. URL Construction Fails for Bare IP Targets
+
+### Symptoms
+
+```
+Fingerprint request failed:
+Header analysis request failed:
+```
+
+Recon module fails all HTTP requests when target is a bare IP address (e.g., `10.129.43.129`).
+
+### Root Cause
+
+When the target is a bare IP, `_parse_target()` creates `Target(ip="10.129.43.129")` with `hostname=None` and `url=None`. The recon functions construct URLs as:
+
+```python
+base_url = target.url or f"http://{target.hostname}"  # Becomes "http://None"
+```
+
+Since both `target.url` and `target.hostname` are `None`, the URL becomes `http://None`, causing all HTTP requests to fail.
+
+### Solution
+
+Changed URL construction in all recon functions to fall back to `target.ip`:
+
+```python
+base_url = target.url or f"http://{target.hostname or target.ip}"
+```
+
+**Files:**
+- `src/redteam_analyzer/modules/recon/active.py` — `tech_fingerprint()`, `header_analysis()`, `directory_bust()`
+- `src/redteam_analyzer/modules/vuln/nuclei_wrapper.py` — `run_nuclei()` adds `http://` prefix to bare IPs
+
+### Lesson Learned
+
+The `Target` model may have `ip` set but `hostname=None` when the user passes a bare IP. Always check all Target fields (`ip`, `hostname`, `url`) when constructing URLs.
+
+---
+
+## 10. Nuclei Target Format
+
+### Symptoms
+
+Nuclei times out or fails to connect when given a bare IP address.
+
+### Root Cause
+
+Nuclei expects targets in URL format (`http://IP` or `https://IP`). When given a bare IP like `10.129.43.129`, it doesn't know what protocol to use.
+
+### Solution
+
+Added URL prefix logic in `run_nuclei()`:
+
+```python
+nuclei_target = target
+if not target.startswith(("http://", "https://")):
+    nuclei_target = f"http://{target}"
+cmd.extend(["-target", nuclei_target])
+```
+
+**File:** `src/redteam_analyzer/modules/vuln/nuclei_wrapper.py`
 
 ---
 
@@ -290,7 +389,10 @@ Run the scan directly without `-T`. Use tmux panes or windows manually to parall
 | PluginManager submodule discovery | `core/plugin_manager.py` | Added submodule search for `BasePlugin` subclasses |
 | TokenBucket rate limiter bypass | `utils/rate_limiter.py` | Changed `<= 0` to `< 1` |
 | Pydantic v2 drops on_progress | `core/models.py`, `cli/main.py`, `modules/scan/plugin.py` | Added `on_progress` as proper Pydantic field |
-| Nmap progress not displayed | `utils/external_tools.py` | Rewrote stderr reader to handle `\r` line endings |
+| Nmap progress not displayed (\r) | `utils/external_tools.py` | Rewrote stderr reader to handle `\r` line endings |
+| Nmap progress not displayed (stdout) | `modules/scan/nmap_wrapper.py` | Added `--stats-every=5s` to force progress to stderr |
 | Indentation error | `modules/scan/plugin.py` | Fixed extra indentation |
 | PEP 668 on Kali | N/A (environment) | Use `python3 -m venv .venv` |
-| `--new-terminal` in tmux | `cli/terminal.py` | Deferred; falls back gracefully |
+| `--new-terminal` in tmux | `cli/terminal.py` | Added tmux detection and `tmux new-window` support |
+| URL construction for bare IPs | `modules/recon/active.py`, `modules/vuln/nuclei_wrapper.py` | Fall back to `target.ip` when `hostname` is None |
+| Nuclei target format | `modules/vuln/nuclei_wrapper.py` | Add `http://` prefix to bare IPs/hostnames |
