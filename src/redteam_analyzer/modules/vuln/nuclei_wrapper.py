@@ -146,6 +146,10 @@ def _parse_nuclei_entry(entry: Dict[str, Any]) -> Optional[Finding]:
     cvss_score = classification.get("cvss-score")
     cve_id = classification.get("cve-id")
 
+    # Nuclei may return cve-id as list — normalize to string
+    if isinstance(cve_id, list):
+        cve_id = ", ".join(cve_id) if cve_id else None
+
     # Build location
     matched_at = entry.get("matched-at", entry.get("host", ""))
     matcher_name = entry.get("matcher-name", "")

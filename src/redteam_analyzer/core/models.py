@@ -6,7 +6,7 @@ All models use Pydantic v2 for validation and serialization.
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Severity(str, Enum):
@@ -62,6 +62,14 @@ class Finding(BaseModel):
     cvss_score: Optional[float] = Field(None, ge=0, le=10)
     cve_id: Optional[str] = None
     remediation: str = ""
+
+    @field_validator("cve_id", mode="before")
+    @classmethod
+    def normalize_cve_id(cls, v: Any) -> Optional[str]:
+        """Normalize cve_id — nuclei may return list instead of string."""
+        if isinstance(v, list):
+            return ", ".join(v) if v else None
+        return v
 
 
 class Target(BaseModel):
